@@ -26,8 +26,6 @@ type GeneralController struct {
 
 type CustomController interface {
 	syncHandler(context context.Context, key string) error
-	handleObject(context context.Context, namespace string, name string, obj interface{}) error
-	handleDeleteObject(context context.Context, key string) error
 }
 
 func NewGeneralController(primaryInformer cache.SharedIndexInformer, 

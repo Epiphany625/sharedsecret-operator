@@ -54,7 +54,7 @@ func main() {
 	kubeFactory := informers.NewSharedInformerFactory(kubeClient, resync)
 	sharedsecretFactory := sharedsecretinformers.NewSharedInformerFactory(sharedsecretClient, resync)
 
-	sharedsecretController := controller.NewSharedSecretController(kubeClient, kubeFactory, sharedsecretFactory)
+	sharedsecretController := controller.NewSharedSecretController(kubeClient, sharedsecretClient, kubeFactory, sharedsecretFactory)
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
