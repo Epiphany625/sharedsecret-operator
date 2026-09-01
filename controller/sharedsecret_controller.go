@@ -24,7 +24,8 @@ import (
 
 const (
 	// finalizer const string 
-	FINALIZER = "secrets.leo.dev/cleanup-copies"
+	FINALIZER = "secrets.leo.dev/secret-cleanup-copies"
+
 )
 
 type SharedSecretController struct {
@@ -33,14 +34,6 @@ type SharedSecretController struct {
 	SharedSecretLister v1alphav1listers.SharedSecretLister
 	SecretLister corev1listers.SecretLister
 	NamespaceLister corev1listers.NamespaceLister
-}
-
-func ownerReferenceLabel(sharedSecretObject *v1alpha1.SharedSecret) map[string]string{
-	return map[string]string{
-		"secrets.leo.dev/owner": "sharedsecret",
-		"secrets.leo.dev/sharedsecretnamespace": sharedSecretObject.Namespace,
-		"secrets.leo.dev/sharedsecretname": sharedSecretObject.Name,
-	}
 }
 
 func NewSharedSecretController(kubeClient kubernetes.Interface, sharedsecretClient sharedsecretclientset.Interface, kubeFactory informers.SharedInformerFactory, sharedsecretFactory sharedsecretinformers.SharedInformerFactory) *GeneralController {
@@ -72,7 +65,13 @@ func NewSharedSecretController(kubeClient kubernetes.Interface, sharedsecretClie
 			namespaceInformer.HasSynced,
 		}
 	
-	generalController := NewGeneralController(sharedSecretInformer, supportingInformers, informersSynced, ssController)
+	generalController := NewGeneralController(
+		sharedSecretInformer, 
+		supportingInformers, 
+		informersSynced, 
+		ssController,
+		SHARED_SECRET_CRD,
+	)
 
 	return generalController
 }
@@ -137,7 +136,7 @@ func (ss SharedSecretController) handleObject(
 	klog.Infof("Matched namespaces: %s", targetnamespaces)
 
 	// create or update secret.
-	normalizedLabel := ownerReferenceLabel(sharedSecretObject)
+	normalizedLabel := ownerReferenceLabel(SHARED_SECRET_CRD, sharedSecretObject.Namespace, sharedSecretObject.Name)
 
 	for _, ns := range targetnamespaces {
 		existingSecret, err := ss.KubeClient.CoreV1().Secrets(ns.Name).Get(ctx, secretObject.Name, metav1.GetOptions{})
@@ -232,7 +231,9 @@ func (ss SharedSecretController) handleDeleteObject(ctx context.Context,
 
 	// step 2. find and delete all secrets spawned by this shared secret. 
 	// TODO. in the future, perhaps building an index is better than looping around. 
-	selector := labels.SelectorFromSet(ownerReferenceLabel(sharedSecretObject))
+	selector := labels.SelectorFromSet(
+		ownerReferenceLabel(SHARED_SECRET_CRD, sharedSecretObject.Namespace, sharedSecretObject.Name),
+	)
 	// note here: do not specify Secret(ns.Name) so that it searches matching secrets from all namespaces, 
 	// not only the namespaces specified by current sharedsecret spec. 
 	matchingSecrets, err := ss.SecretLister.List(selector)

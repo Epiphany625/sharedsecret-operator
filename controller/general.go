@@ -13,6 +13,19 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 )
+const (
+	// endpoint of this CRD
+	API_ENDPOINT = "secrets.leo.dev"
+
+	// name of CRDs
+	SHARED_SECRET_CRD = "SharedSecret"
+
+	// owner reference labels
+	// cross namespace, so classic owner reference labels do not work. 
+	LABEL_OWNERKIND = API_ENDPOINT + "/ownerkind"
+	LABEL_OWNERNAMESPACE = API_ENDPOINT + "/ownernamespace"
+	LABEL_OWNERNAME = API_ENDPOINT + "/ownername"
+)
 
 type GeneralController struct {
 	queue workqueue.TypedRateLimitingInterface[string]
@@ -22,6 +35,9 @@ type GeneralController struct {
 
 	// custom CRD controller
 	customController CustomController
+
+	// target CRD
+	crdKind string
 }
 
 type CustomController interface {
@@ -31,7 +47,9 @@ type CustomController interface {
 func NewGeneralController(primaryInformer cache.SharedIndexInformer, 
 	supportingInformers []cache.SharedIndexInformer, 
 	informersSynced []cache.InformerSynced, 
-	cc CustomController) *GeneralController {
+	cc CustomController, 
+	crdKind string, 
+	) *GeneralController {
 	
 	// initialize controller
 	controller := &GeneralController{
@@ -42,6 +60,7 @@ func NewGeneralController(primaryInformer cache.SharedIndexInformer,
 		supportingInformers: supportingInformers,
 		informersSynced: informersSynced,
 		customController: cc,
+		crdKind: crdKind,
 	}
 
 	// add event handler to primary informer
@@ -89,15 +108,55 @@ func (c *GeneralController) enqueueSupportingObject(obj interface{}) {
 		return 
 	}
 	owner := metav1.GetControllerOf(objMeta)
-	if owner == nil {
+	if owner != nil {
+		c.enqueueOwnerReferenced(objMeta, owner) 
+	} else {
+		c.enqueueLabelReferenced(objMeta)
+	}
+}
+
+func (c *GeneralController) enqueueOwnerReferenced(objMeta metav1.Object, ownerReference *metav1.OwnerReference) {
+	if ownerReference == nil || objMeta == nil {
+		utilruntime.HandleError(fmt.Errorf("nil owner reference or nil objMeta"))
 		return 
 	}
-	key := owner.Name
+	
+	// edge case when the owner is not the CRD we are targeting
+	if ownerReference.Kind != c.crdKind {
+		return 
+	}
+
+	key := ownerReference.Name
 	namespace := objMeta.GetNamespace()
 	if namespace != "" {
 		key = namespace + "/" + key
 	}
 	c.queue.Add(key)
+}
+
+func (c *GeneralController) enqueueLabelReferenced(objMeta metav1.Object) {
+	if objMeta == nil {
+		utilruntime.HandleError(fmt.Errorf("nil objMeta"))
+	}
+	existingLabels := objMeta.GetLabels()
+	crd, crdExists := existingLabels[LABEL_OWNERKIND]
+
+	// edge case when the owner is not the CRD we are targeting
+	if !crdExists || crd != c.crdKind {
+		return 
+	}
+
+	ownerNamespace, namespaceExists := existingLabels[LABEL_OWNERNAMESPACE]
+	ownerName, nameExists := existingLabels[LABEL_OWNERNAME]
+	if !namespaceExists || ownerNamespace == "" {
+		if nameExists {
+			c.queue.Add(ownerName)
+		}
+	} else {
+		if nameExists {
+			c.queue.Add(ownerNamespace + "/" + ownerName)
+		}
+	}
 }
 
 
@@ -146,4 +205,13 @@ func (c *GeneralController) processNextItem(ctx context.Context) bool {
 	utilruntime.HandleError(fmt.Errorf("syncing %q: %w (requeueing)", key, err))
 	c.queue.AddRateLimited(key)
 	return true
+}
+
+
+func ownerReferenceLabel(ownerKind string, ownerNamespace string, ownerName string) map[string]string{
+	return map[string]string{
+		LABEL_OWNERKIND: ownerKind,
+		LABEL_OWNERNAMESPACE: ownerNamespace,
+		LABEL_OWNERNAME: ownerName,
+	}
 }
