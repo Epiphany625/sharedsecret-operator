@@ -9,4 +9,5 @@ TODO list:
 3. Write unit & integration tests for using fake, envtest, etc.
 4. Add Prometheus & Grafana metrics support for this operator. Make it configurable through main.go
 5. Try to make sharedsecret controller work within a cluster, and test out its behavior.
-6. Finish project.
+6. Investigate leader elections and advanced topics.
+7. Finish project.

@@ -266,28 +266,3 @@ func removeStringFromList(finalizers []string, toRemove string) []string {
 	}
 	return res 
 }
-
-func newSecret(
-	name string,
-	namespace string,
-	data map[string][]byte,
-	stringData map[string]string,
-	secretType corev1.SecretType,
-	labels map[string]string, 
-	annotations map[string]string,
-	immutable *bool, 
-) *corev1.Secret {
-	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-			Labels: labels, 
-			Annotations: annotations,
-		},
-		Data:       data,
-		StringData: stringData,
-		Type:       secretType,
-		Immutable: immutable,
-
-	}
-}
