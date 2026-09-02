@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -120,6 +121,32 @@ func (ss SharedSecretController) handleObject(
 		}
 	}
 
+	// clean up stale secrets in the case of an namespace selector / target namespace update of SharedSecretCRD
+	ownedSecrets, err := ss.findOwnedSecrets(ssNamespace, ssName)
+	if err != nil {
+		return err
+	}
+	for _, ownedSecret := range ownedSecrets {
+		ns, err := ss.NamespaceLister.Get(ownedSecret.Namespace)
+		if errors.IsNotFound(err) {
+			continue // stale. namespace deleted during reconciliation loop. 
+		} else if err != nil {
+			return err 
+		}
+		matches, err := namespaceMatches(ns, sharedSecretObject.Spec.NamespaceSelector, sharedSecretObject.Spec.TargetNamespaces)
+		if err != nil {
+			return err
+		}
+		if !matches {
+			err := ss.KubeClient.CoreV1().Secrets(ns.Name).Delete(ctx, ownedSecret.Name, metav1.DeleteOptions{})
+			if errors.IsNotFound(err) {
+				continue
+			} else if err != nil {
+				return err
+			}
+		}
+	}
+
 
 	// find the secret object we are copying
 	secretObject, err := ss.SecretLister.Secrets(sharedSecretObject.Namespace).Get(sharedSecretObject.Spec.SourceSecret)
@@ -133,7 +160,6 @@ func (ss SharedSecretController) handleObject(
 	if err != nil {
 		return err
 	}
-	klog.Infof("Matched namespaces: %s", targetnamespaces)
 
 	// create or update secret.
 	normalizedLabel := ownerReferenceLabel(SHARED_SECRET_CRD, sharedSecretObject.Namespace, sharedSecretObject.Name)
@@ -176,6 +202,38 @@ func (ss SharedSecretController) handleObject(
 	return nil
 }
 
+func (ss SharedSecretController) findOwnedSecrets(ownerNamespace string, ownerName string ) ([]*corev1.Secret, error) {
+    selector := labels.SelectorFromSet(labels.Set{
+        LABEL_OWNERKIND:      SHARED_SECRET_CRD,
+        LABEL_OWNERNAMESPACE: ownerNamespace,
+        LABEL_OWNERNAME:      ownerName,
+    })
+
+    secrets, err := ss.SecretLister.List(selector)
+    if err != nil {
+        return nil, fmt.Errorf(
+            "listing secrets owned by %s/%s: %w",
+            ownerNamespace,
+            ownerName,
+            err,
+        )
+    }
+    return secrets, nil
+}
+
+func namespaceMatches(
+    namespace *corev1.Namespace,
+    labelSelector *metav1.LabelSelector,
+	targetNamespace []string,
+) (bool, error) {
+    selector, err := metav1.LabelSelectorAsSelector(labelSelector)
+    if err != nil || namespace == nil {
+        return false, err
+    }
+
+    return selector.Matches(labels.Set(namespace.Labels)) || slices.Contains(targetNamespace, namespace.Name), nil
+}
+
 func hasFinalizer(sharedSecretObject *v1alpha1.SharedSecret, finalizer string) bool {
 	for _, f := range sharedSecretObject.GetFinalizers() {
 		if f == finalizer {
@@ -188,12 +246,6 @@ func hasFinalizer(sharedSecretObject *v1alpha1.SharedSecret, finalizer string) b
 func (ss SharedSecretController) getTargetNamespaces(obj *v1alpha1.SharedSecret) (targetNamespaces []*corev1.Namespace, err error) {
 	namespaceStringMatch := obj.Spec.TargetNamespaces
 	namespaceSelector := obj.Spec.NamespaceSelector
-
-	klog.Infof(
-		"target namespaces: %v, namespace selector: %v",
-		namespaceStringMatch,
-		namespaceSelector,
-	)
 
 	selector, err := metav1.LabelSelectorAsSelector(namespaceSelector)
 	if err != nil {
