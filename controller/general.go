@@ -23,8 +23,11 @@ const (
 	// owner reference labels
 	// cross namespace, so classic owner reference labels do not work. 
 	LABEL_OWNERKIND = API_ENDPOINT + "/ownerkind"
-	LABEL_OWNERNAMESPACE = API_ENDPOINT + "/ownernamespace"
+	LABEL_OWNERNAMESPACE = API_ENDPOINT + "/ownerns"
 	LABEL_OWNERNAME = API_ENDPOINT + "/ownername"
+
+	LABEL_CRDTARGETED_NAMESPACE = API_ENDPOINT + "/targetedbyns"
+	LABEL_CRDTARGETED_NAME = API_ENDPOINT + "/targetedbyname"
 )
 
 type GeneralController struct {
@@ -139,23 +142,19 @@ func (c *GeneralController) enqueueLabelReferenced(objMeta metav1.Object) {
 		utilruntime.HandleError(fmt.Errorf("nil objMeta"))
 	}
 	existingLabels := objMeta.GetLabels()
-	crd, crdExists := existingLabels[LABEL_OWNERKIND]
-
-	// edge case when the owner is not the CRD we are targeting
-	if !crdExists || crd != c.crdKind {
-		return 
-	}
 
 	ownerNamespace, namespaceExists := existingLabels[LABEL_OWNERNAMESPACE]
 	ownerName, nameExists := existingLabels[LABEL_OWNERNAME]
-	if !namespaceExists || ownerNamespace == "" {
-		if nameExists {
-			c.queue.Add(ownerName)
-		}
-	} else {
-		if nameExists {
-			c.queue.Add(ownerNamespace + "/" + ownerName)
-		}
+	crd, crdExists := existingLabels[LABEL_OWNERKIND]
+	if crdExists && crd == c.crdKind && namespaceExists && nameExists {
+		c.queue.Add(formKey(ownerNamespace, ownerName))
+		return 
+	}
+	targetedByNamespace, targetedByNamespaceExists := existingLabels[LABEL_CRDTARGETED_NAMESPACE]
+	targetedByName, targetedByNameExists := existingLabels[LABEL_CRDTARGETED_NAME]
+	if targetedByNamespaceExists && targetedByNameExists {
+		c.queue.Add(formKey(targetedByNamespace, targetedByName))
+		return 
 	}
 }
 
@@ -208,10 +207,20 @@ func (c *GeneralController) processNextItem(ctx context.Context) bool {
 }
 
 
+// this label indicates that this resource is created and managed by a CRD. Its changes will be reverted by a resync, 
+// and a deletion of CR will also delete this resource. 
 func ownerReferenceLabel(ownerKind string, ownerNamespace string, ownerName string) map[string]string{
 	return map[string]string{
 		LABEL_OWNERKIND: ownerKind,
 		LABEL_OWNERNAMESPACE: ownerNamespace,
 		LABEL_OWNERNAME: ownerName,
+	}
+}
+
+// the label indicates that this resource is targeted by a CRD. its change in specs or values will trigger an update of other resources. 
+func targetedReferenceLabel(ownerNamespace string, ownerName string) map[string]string{
+	return map[string]string{
+		LABEL_CRDTARGETED_NAMESPACE: ownerNamespace,
+		LABEL_CRDTARGETED_NAME: ownerName,
 	}
 }

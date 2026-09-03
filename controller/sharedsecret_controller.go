@@ -154,7 +154,22 @@ func (ss SharedSecretController) handleObject(
 		return err
 	}
 	secretObject = secretObject.DeepCopy()
-	
+
+	// make sure the source secret carries the targetedBy labels, so that a change to its
+	// values is routed back to this sharedsecret by the supporting secret informer.
+	targetedLabel := targetedReferenceLabel(sharedSecretObject.Namespace, sharedSecretObject.Name)
+	if !containsLabels(secretObject.Labels, targetedLabel) {
+		if secretObject.Labels == nil {
+			secretObject.Labels = map[string]string{}
+		}
+		maps.Copy(secretObject.Labels, targetedLabel)
+		// assign back to secretObject so the copies below are made from the newest version.
+		secretObject, err = ss.KubeClient.CoreV1().Secrets(secretObject.Namespace).Update(ctx, secretObject, metav1.UpdateOptions{})
+		if err != nil {
+			return err
+		}
+	}
+
 	// get all targeted namespaces
 	targetnamespaces, err := ss.getTargetNamespaces(sharedSecretObject)
 	if err != nil {

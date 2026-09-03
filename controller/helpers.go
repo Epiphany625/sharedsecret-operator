@@ -68,3 +68,21 @@ func newNamespace(name string) *corev1.Namespace {
 	}
 }
 
+// form key based on namespace & name
+func formKey(namespace string, name string) string {
+	if namespace == "" {
+		return name
+	}
+	return namespace + "/" + name
+}
+
+
+// reports whether every key/value pair of subset is already present in existingLabels.
+func containsLabels(existingLabels map[string]string, subset map[string]string) bool {
+	for key, val := range subset {
+		if existingLabels[key] != val {
+			return false
+		}
+	}
+	return true
+}
